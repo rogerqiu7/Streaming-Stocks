@@ -1,0 +1,200 @@
+---
+title: "Streaming Stocks"
+author: "Roger Qiu"
+date: "2022-08-03"
+output: 
+  html_document:
+    toc: true
+---
+
+# The Effect of Content Released On Streaming Services
+
+## Introduction
+
+In this project, we analyze the effect that newly released content has on the stock of streaming companies. To do this, we look at 2 sources of data. To see if a show like Stranger Things has a noticeable effect on the stock price of Netflix. Then we see if there is a correlation between the stock prices of different streaming companies like Netflix and HBO or Disney+.
+
+## Analysis
+
+### The Data
+
+First let's loud our libraries, we'll use the tidyverse library for most of our tools and dplyr for data manipulation. Then we load the quantmod library which will let us access historical stock prices for our streaming companies. The graph below will show the prices for each company over the last 10 years.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(quantmod)
+
+# get stock symbols of streaming companies 
+getSymbols(c("NFLX","T","DIS", "AMZN"))
+# each symbol consists of rows of business days and columns of:
+# stock price open, high, low, close, volume and adjusted price for that day
+
+# merge stock data into one data frame, take close columns from each stock and combine with date
+stocks <- data.frame("Netflix" = NFLX$NFLX.Close, "HBO" = T$T.Close, "Disney"=DIS$DIS.Close, "Amazon" = AMZN$AMZN.Close, "Date" = as.Date(row.names(as.data.frame(NFLX))))
+
+# now lets just filter from 2012 to see the last 10 years
+dated_stocks <- filter(stocks, Date >= "2012-01-01")
+
+# Reshaping the data frame so one column contains the type of stock
+# gather by stocks, with close price as values, bring date to first column
+graphable <- dated_stocks %>% gather(key = "stock", value = "value", -Date)
+
+# Graphing the stock prices, Date on x axis, value on y, colored by difference stock
+graphable %>% ggplot() + geom_line(aes(x = Date, y= value, color = stock)) +
+  scale_color_discrete(name = "Company", labels = c("Amazon", "Disney", "Netflix", "AT&T (HBO)")) + 
+  labs(title = "Stock Prices of Streaming Services", y = "Stock Price")
+```
+
+Netflix clearly has clearly grown more for a few years but has since recently dropped to near where the other companies prices are at.
+
+Now the last library we will load is the `gtrendsR` library. This is the Google Trend library that allows us to find the popularity of Google search terms over time. Using this data, we can visualize the relative popularity of the shows and approximate their release dates.
+
+```{r}
+library(gtrendsR)
+
+# Let create the trends dataframe where we look at the mandalorian, stranger things, game of thrones and the boys tv shows
+trends <- gtrends(
+  keyword=c("mandalorian", "stranger things", "game of thrones", "the boys"), 
+  time = "2012-01-01 2022-08-03")
+
+# now we make the trends over time dataframe, load hits as numeric and replace blanks with 0
+trends_over_time <- trends$interest_over_time
+trends_over_time <- trends_over_time %>% mutate(hits = as.numeric(hits))
+trends_over_time <- trends_over_time %>% replace_na(list(hits = 0))
+
+# plot the trends of hits over time with the shows as different colors.  
+trends_over_time %>% ggplot() + geom_line(aes(date, hits, color = keyword)) +
+  scale_color_discrete(name = "Show", labels = c("Game of Thrones", "The Mandalorian", "Stranger Things", "The Boys" )) + 
+  labs(title = "Google Trend Data For Streaming Service Shows", y = "Hits (Normalized to be between 0 and 1000", x = "Date")
+
+```
+
+Game of Thrones was clearly tremendously popular a while ago with Stranger Things now being a new favorite.
+
+### The Trends
+
+Before we compare this trend data to the stock data, let's see if there are other trends we can visualize. By adding `geo = "US"` we were able to get trend data on a state level by looking at the `interest_by_region` data frame. We also used the `maps` library to help create maps of the United States.
+
+```{r}
+library(maps)
+
+# Getting trends by state:
+# set region trends dataframe as dataframe of shows along with US as geography and time over last 10 years
+# set states as dataframe of hits by location by show
+# lower casing the name of the state to match with the map data
+region_trends <-  gtrends(keyword=c("mandalorian", "stranger things", "game of thrones", "the boys"), 
+  geo = "US" , 
+  time = "2012-01-01 2022-08-03")
+states <- region_trends$interest_by_region
+states <- states %>% mutate(location = tolower(location))
+
+# Getting the map data
+states_map <- map_data("state")
+
+# Plotting the map
+states %>% ggplot(aes(map_id = location)) +
+  geom_map(aes(fill = hits), map = states_map) +
+  expand_limits(x = states_map$long, y = states_map$lat) + 
+  facet_wrap(~ keyword, nrow = 2) + 
+  labs(title = "Google Trend Data For Streaming Service Shows By State", x = "Longitude", y = "Latitude") + 
+  scale_fill_continuous(name = "Hits (Scaled to 100)")
+```
+
+Insights like this may help companies get a better understanding of who is watching their shows. For example, Utah residents seem to love Stranger Things and The Mandalorian. Perhaps companies could look into advertising more science fiction shows in that area.
+
+### Combining Trend with Stock Data
+
+Using Google Trend data, let's each company's stock price along with the popularity of their respective shows.Even though many of the shows did not exist 10 years ago, we still look at the stock over the 10 years to get a larger view of the overall trend.
+
+```{r}
+
+#Plotting stock and trends on the same graph for Netflix and Stranger Things. Note that we adjust the scale of the Trends axis
+ggplot() + geom_line(dated_stocks, mapping = aes(x = Date, y= NFLX.Close, color = "Price of Netflix Stock")) + 
+  geom_line(filter(trends_over_time, keyword == "stranger things"), mapping = aes(as.Date(date), hits*6, color = "Stranger Things Google Trends Hits")) +
+  scale_y_continuous(name = "Price", sec.axis = sec_axis(~./6, name="Google Trends Hits")) + 
+  labs(title = "Neflix Stock and Google Trends")
+
+# Plotting AT&T (HBO) Stock and Google Trends for Game of Thrones on the same graph
+ggplot() + geom_line(dated_stocks, mapping = aes(x = Date, y= T.Close, color = "Price of AT&T (HBO) Stock")) + 
+  geom_line(filter(trends_over_time, keyword == "game of thrones"), mapping = aes(as.Date(date), hits, color = "Game of Thrones Google Trends Hits")) +
+  scale_y_continuous(name = "Price", sec.axis = sec_axis(~., name="Google Trends Hits")) + 
+  labs(title = "AT&T (HBO) Stock and Google Trends")
+
+# Plotting Disney Stock and Google Trends for The Mandalorian on the same graph
+ggplot() + geom_line(dated_stocks, mapping = aes(x = Date, y= T.Close, color = "Price of Disney Stock")) + 
+  geom_line(filter(trends_over_time, keyword == "mandalorian"), mapping = aes(as.Date(date), hits, color = "The Mandalorian Google Trends Hits")) +
+  scale_y_continuous(name = "Price", sec.axis = sec_axis(~., name="Google Trends Hits")) + 
+  labs(title = "Disney Stock and Google Trends")
+
+# Plotting Amazon Stock and Google Trends for The Boys on the same graph
+ggplot() + geom_line(dated_stocks, mapping = aes(x = Date, y= T.Close, color = "Price of Amazon Stock")) + 
+  geom_line(filter(trends_over_time, keyword == "the boys"), mapping = aes(as.Date(date), hits, color = "The Boys Google Trends Hits")) +
+  scale_y_continuous(name = "Price", sec.axis = sec_axis(~., name="Google Trends Hits")) + 
+  labs(title = "Amazon Stock and Google Trends")
+```
+
+Initially it seems from the release of Stranger Things in 2018 that release of new shows could have had a substantial impact on the company's stock prices. However, the release schedule of Game of Thrones, Mandalorian and The Boys seem to have had less of an impact on their company's value. Perhaps because HBO is part of a larger company (AT&T), HBO's success doesn't impact the larger business' success to the same degree as goes the other 2 companies as well.
+
+### Checking for Linear Regression
+
+Finally, let's see if there was a correlation between any of these services. Perhaps if Netflix's stock rises, AT&T's stock will fall. We created a plot with Netflix's stock on the x axis and Disney's stock on the y axis. Note that we only used data points starting from September 2019 since that was the month of Disney Plus' launch.
+
+```{r}
+# Filtering the stock data with dates after 2019
+# the data frame contains close data of all 4 companies
+stocks_since_disney_plus <- stocks %>% filter(Date > as.Date("2019-09-01"))
+
+# Plotting Netflix stock vs Disney Stock's line of best fit and adding a LOESS smoother
+# LOESS is Locally estimated scatter plot smoothing, is a moving average of the regression.
+# it helps us find the actual moving average and compare to our estimated line
+stocks_since_disney_plus %>% ggplot(aes(x = NFLX.Close, y = DIS.Close)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue") +
+  geom_smooth(se = FALSE, color = "red") + 
+  labs(title = "Netflix Stock vs Disney Stock", x = "Netflix Stock", y = "Disney Stock") 
+
+
+```
+
+The relationship looks somewhat linear but it's hard to say to what extent. This is unsurprising --- it would have been pretty amazing if the stock prices of two companies were so closely correlated. Perhaps a multiple linear regression model or a model that considers more factors would be more effective at predicting stock prices.
+
+### Regression Analysis
+
+```{r}
+# create model that analyzes the linear regression of Netflix stock and Disney stock closes since 2019
+model = lm(NFLX.Close ~ DIS.Close, data = stocks_since_disney_plus)
+
+# summarize the model to analyze results
+summary(model)
+
+#RSE analysis
+sigma(model)
+avg_rse <- sigma(model)/mean(stocks_since_disney_plus$NFLX.Close)
+avg_rse
+```
+
+#### Coefficient Estimate
+
+Coefficient estimate is arguably our most important result. The estimate column is regression coefficient, or the expected change in dependent variable (y) (Netflix stock) for one unit increase in independent variable (x) (Disney stock). Here our result is 2.96, so roughly, for every dollar that Disney stock goes up, Netflix goes up by 2.96. But how reliable is this result? 
+
+#### P-value
+
+Next to Dis.Close on the right, you can see 3 stars, which means it has a p-value between 0 and 0.001. This immediately tells us that the results of the regression is statistically significant. The fewer the stars, the higher the p-value and the less significant the findings are. We typically want to see 1 star or less, as in the p-value is 0.05 or less. This means that if there was no relationship between the 2, we can find this result in only 1 out of of 5000 random samples. Here our P-value is 2.2e-16 so that would be quite a rare finding should there be no relationship between the 2 stocks.
+
+#### RSE and R^2
+
+Finally let's look at the goodness of fit of our line by looking at the Residual Standard Error and the R-Squared.
+
+The Residual Standard Error is the estimate of standard deviation of error between each point and the line of best fit, usually the lower this amount, the better the line of fit. 
+
+Here our RSE is 96.7, we can divide 96.7 by the mean of our dependent variable (Netflix stock) which is 438.53 to get our average RSE of 22%. This is good, RSE higher than 50% are not used as the standard error is too high. Less than 30% is considered to have good reliability.
+
+R squared: can tell us how much variation of a dependent variable is caused by the independent variable. 100% means all movement is explained by independent, higher the number, the higher the correlation between the 2 variables.
+
+Here our R squared is 0.4322 so only 43% of the variance found in the Netflix's stock (dependent variable) is explained by Disney stock (independent variable) price. Not great, we usually want to see 70% or more for a good level of correlation.
+
+## Conclusion
+
+In this project we were able to compare and contrast different methods for evaluating the success of a streaming service. Google Trends helped identify when a streaming platform has released a new show. Stock prices are a good indicator of the value of a company. But ultimately, these two data sets seem to be too general to reveal any new insights when used together. However, we began to uncover some interesting information when looking further into specific data sets. When we looked at specific region data we were able to get a better sense of different demographics and their interests.
+
+As for the results, stock data didn't seem to match particularly well with Google Trends data. New shows popularity doesn't seem to impact the larger business' success to the same degree as it did with Netflix. As for comparing Netflix to Disney stock prices for correlation: roughly for every dollar that Disney stock goes up, Netflix goes up by 2.96. This finding was proven to be statistically significant and with a reliable standard error amount but was proven to have a low R-Squared value meaning other factors could be at play in their correlation. 
